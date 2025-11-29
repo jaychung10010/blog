@@ -9,7 +9,7 @@
 <meta name="author" content="Jay Chung">
 <meta name="dcterms.date" content="2025-11-29">
 
-<title>DepMap Multi-omics Autoencoder Analysis – All Things Bioinformatics</title>
+<title>Using Machine Learning + OMICS to Predict Drug Sensitivity in DepMap (Part 1) – All Things Bioinformatics</title>
 <style>
 code{white-space: pre-wrap;}
 span.smallcaps{font-variant: small-caps;}
@@ -158,13 +158,13 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 
 <header id="title-block-header" class="quarto-title-block default">
 <div class="quarto-title">
-<h1 class="title">DepMap Multi-omics Autoencoder Analysis</h1>
+<h1 class="title">Using Machine Learning + OMICS to Predict Drug Sensitivity in DepMap (Part 1)</h1>
   <div class="quarto-categories">
     <div class="quarto-category">R</div>
-    <div class="quarto-category">Bioinformatics</div>
+    <div class="quarto-category">DepMap</div>
     <div class="quarto-category">Autoencoder</div>
     <div class="quarto-category">Multi-omics</div>
-    <div class="quarto-category">UMAP</div>
+    <div class="quarto-category">Machine Learning</div>
   </div>
   </div>
 
@@ -194,7 +194,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </header>
 
 
-<p>This post explores the use of autoencoders to embed DepMap genomics data, comparing RNA expression only versus a multi-omics approach (RNA + Mutation + CRISPR).</p>
+<p>This post explores the use of autoencoders to embed DepMap genomics data for drug sensitivity prediction. Background: Cell panel drug screens are very costly and often result in only up to hundreds of cell lines available, limiting the power of sensitivity biomarker detection. By leveraging machine learning (ML) approaches, one can expand sensitivity prediction to thousands of DepMap cell lines and thus improve the power of biomarker detection. Problem: DepMap OMICS data are high-dimensional, and such high-dimensional data may hinder ML prediction due to overfitting problems and noisy data. Proposal: By leveraging AutoEncoder (AE), a deep learning approach, high-dimensional OMICS data can be compressed into Deep Features (DF), thus overcoming the problem of overfitting and resulting in better drug sensitivity prediction accuracy.</p>
 <section id="setup-and-libraries" class="level2">
 <h2 class="anchored" data-anchor-id="setup-and-libraries">Setup and Libraries</h2>
 <div class="cell">

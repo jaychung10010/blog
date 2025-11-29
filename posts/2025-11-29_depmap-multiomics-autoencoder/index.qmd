@@ -1,0 +1,355 @@
+---
+title: "DepMap Multi-omics Autoencoder Analysis"
+author: "Jay Chung"
+date: "2025-11-29"
+categories: [R, Bioinformatics, Autoencoder, Multi-omics, UMAP]
+format:
+  html:
+    code-fold: true
+---
+
+This post explores the use of autoencoders to embed DepMap genomics data, comparing RNA expression only versus a multi-omics approach (RNA + Mutation + CRISPR).
+
+## Setup and Libraries
+
+```{r}
+#| label: setup
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(data.table)
+library(ggpubr)
+library(h2o)
+library(umap)
+library(ggrepel)
+library(microViz)
+```
+
+## Aim 1: RNA Expression Autoencoder
+
+First, we use an autoencoder to embed cell lines based on RNA expression data alone.
+
+### Data Loading and Preprocessing
+
+We filter for high-variance genes to reduce noise and dimensionality before feeding the data into the autoencoder.
+
+```{r}
+#| label: aim1-data-prep
+#| eval: false
+
+# load data: RNA expression
+# Note: Adjust paths as needed
+load("CCLE_24Q2_GE_match_sample_info.RData")
+load("sample_info_match_biomarkers.RData")
+
+# remove low variance genes
+ge_var <- apply(ccle_ge_match_sam, 2, var, na.rm = TRUE) 
+# plot(density(ge_var)) 
+# abline(v = quantile(ge_var, 0.2)) 
+ge_dat_hv <- ccle_ge_match_sam[, which(ge_var > quantile(ge_var, 0.2))] 
+
+# remove any cell lines (rows) that contains NAs
+ge_dat_hv <- ge_dat_hv |> na.omit()
+
+# standardize the data
+ge_dat_hv <- scale(ge_dat_hv) |> as.data.frame()
+
+```
+
+### Model Training
+
+We perform a hyperparameter grid search to find the optimal autoencoder architecture.
+
+```{r}
+#| label: aim1-model-training
+#| eval: false
+
+# Hyperparameter search grid to find best AE model
+h2o.init(nthreads = 20, max_mem_size = "60G")
+rna_h2o <- as.h2o(ge_dat_hv) 
+
+hyper_grid <- list(hidden = list(
+  c(1000, 500, 1000),
+  c(1000, 500, 200, 500, 1000), 
+  c(1000, 100, 50, 100, 1000),
+  c(1000, 500, 100, 500, 1000), 
+  c(2000, 1000, 200, 1000, 2000), 
+  c(1000, 500, 300, 500, 1000)
+))
+
+ae_grid <- h2o.grid(
+  algorithm = "deeplearning",
+  x = colnames(rna_h2o), 
+  training_frame = rna_h2o,
+  grid_id = "RNA_ae1",
+  autoencoder = TRUE,
+  activation = "TanhWithDropout", 
+  hyper_params = hyper_grid,
+  nesterov_accelerated_gradient = TRUE, 
+  epochs = 30,
+  stopping_rounds = 5, 
+  seed = 524
+)
+
+# AE learning with best parameters (selected from grid search)
+ae_model <- h2o.deeplearning(
+  x = colnames(rna_h2o), 
+  training_frame = rna_h2o,
+  autoencoder = TRUE,
+  hidden = c(1000, 500, 200, 500, 1000),
+  hidden_dropout_ratios = c(0.5, 0.5, 0.5, 0.5, 0.5),
+  activation = "TanhWithDropout",
+  epochs = 30,
+  stopping_rounds = 5, 
+  nesterov_accelerated_gradient = TRUE, 
+  seed = 524
+)
+
+# extract the compressed features
+compressed_features <- h2o.deepfeatures(ae_model, rna_h2o, layer = 3) |> as.data.frame()
+rownames(compressed_features) <- rownames(ge_dat_hv)
+
+# Save results
+fwrite(compressed_features, file = "./results/output_files/RNA_AE_compressed_features.csv", sep = ",", row.names = TRUE)
+h2o.shutdown()
+```
+
+## Aim 2: Multi-omics Autoencoder
+
+Next, we integrate RNA expression, mutation data (DAMMUT, HOTMUT), and CRISPR dependency scores.
+
+### Data Integration
+
+We process each data type separately (filtering, standardizing) and then combine them into a single multi-omics dataset.
+
+```{r}
+#| label: aim2-data-integration
+#| eval: false
+
+# load data
+load("CCLE_24Q2_GE_match_sample_info.RData")
+load("DepMap_24Q2_Chronos_match_sample_info.RData")
+load("CCLE_24Q2_DAMMUT_match_sample_info.RData")
+load("CCLE_24Q2_HOTMUT_match_sample_info.RData")
+load("sample_info_match_biomarkers.RData")
+
+# RNA processing
+ge_var <- apply(ccle_ge_match_sam, 2, var, na.rm = TRUE)
+ge_dat_hv <- ccle_ge_match_sam[, which(ge_var > quantile(ge_var, 0.2))]
+ge_dat_hv <- scale(ge_dat_hv) |> as.data.frame()
+
+# Mutation processing
+dam_mut_dat_filt <- dammut_dat_match_sam[, which(apply(na.omit(dammut_dat_match_sam), 2, function(x) sum(x != 0)) > 20)]
+hot_mut_dat_filt <- hotmut_dat_match_sam[, which(apply(na.omit(hotmut_dat_match_sam), 2, function(x) sum(x != 0)) > 20)]
+
+# CRISPR processing
+crispr_var <- apply(chronos_dat_match_sam, 2, var, na.rm = TRUE)
+crispr_dat_hv <- chronos_dat_match_sam[, which(crispr_var > quantile(crispr_var, 0.2))]
+crispr_dat_hv <- scale(crispr_dat_hv) |> as.data.frame()
+
+# Combine data
+colnames(ge_dat_hv) <- paste0(colnames(ge_dat_hv),"_RNA")
+colnames(dam_mut_dat_filt) <- paste0(colnames(dam_mut_dat_filt),"_DAMMUT")
+colnames(hot_mut_dat_filt) <- paste0(colnames(hot_mut_dat_filt),"_HOTMUT")
+colnames(crispr_dat_hv) <- paste0(colnames(crispr_dat_hv),"_CRISPR")
+
+multi_omics_dat <- cbind(ge_dat_hv, dam_mut_dat_filt, hot_mut_dat_filt, crispr_dat_hv)
+
+# Remove rows with too many NAs
+multi_omics_dat <- multi_omics_dat[rowSums(is.na(multi_omics_dat)) <= ncol(multi_omics_dat) * 0.8, ]
+```
+
+### Multi-omics Model Training
+
+We train another autoencoder on this combined dataset.
+
+```{r}
+#| label: aim2-model-training
+#| eval: false
+
+h2o.init(nthreads = 20, max_mem_size = "60G")
+rna_h2o <- as.h2o(multi_omics_dat)
+
+# (Grid search code omitted for brevity, similar to Aim 1)
+
+# AE learning with best parameters
+ae_model <- h2o.deeplearning(
+  x = colnames(rna_h2o),
+  training_frame = rna_h2o,
+  autoencoder = TRUE,
+  hidden = c(1000, 500, 300, 500, 1000),
+  hidden_dropout_ratios = c(0.5, 0.5, 0.5, 0.5, 0.5),
+  activation = "TanhWithDropout",
+  epochs = 30,
+  stopping_rounds = 5, 
+  nesterov_accelerated_gradient = TRUE, 
+  seed = 524
+)
+
+compressed_features <- h2o.deepfeatures(ae_model, rna_h2o, layer = 3) |> as.data.frame()
+rownames(compressed_features) <- rownames(multi_omics_dat)
+
+fwrite(compressed_features, file = "./results/output_files/MultiOmics_AE_compressed_features.csv", sep = ",", row.names = TRUE)
+h2o.shutdown()
+```
+
+## Aim 3: Visualization and Comparison
+
+Finally, we visualize the embeddings using UMAP and compare the clustering with known lineages.
+
+### Full RNA UMAP (without Autoencoder)
+
+```{r}
+#| label: aim3-rna-umap
+#| eval: false
+
+load("CCLE_24Q2_GE_match_sample_info.RData")
+load("sample_info_match_biomarkers.RData")
+ge_var <- apply(ccle_ge_match_sam, 2, var, na.rm = TRUE) # calculate variance for each gene
+plot(density(ge_var)) # plot variance density plot
+abline(v = quantile(ge_var, 0.2)) # select a cutoff
+sum(ge_var > quantile(ge_var, 0.2)) # how many genes passed variance cutoff: 15322
+ge_dat_hv <- ccle_ge_match_sam[, which(ge_var > quantile(ge_var, 0.2))] # select high variance genes
+# standardize the data
+ge_dat_hv <- scale(ge_dat_hv) |> as.data.frame() |> na.omit()
+sample_info <- sample_info[match(rownames(ge_dat_hv), sample_info$StrippedCellLineName), ]
+all(rownames(ge_dat_hv) == sample_info$StrippedCellLineName)
+library(umap)
+umap_dat <- umap(
+  ge_dat_hv, 
+  n_components = 2,
+  n_neighbors = 50,
+  random_state = 524,
+  verbose = TRUE,
+  n_threads = 15
+)
+umap_dat <- as.data.frame(umap_dat$layout)
+umap_dat$cell_line <- sample_info$StrippedCellLineName
+umap_dat$lineage <- sample_info$OncotreeLineage
+umap_dat$subtype <- sample_info$OncotreeSubtype
+library(ggrepel)
+library(microViz)
+ggplot(umap_dat, aes(V1, -V2, color = lineage, fill = lineage)) +
+  geom_point(size = 3, alpha = 0.5) + 
+  scale_fill_manual(values = distinct_palette(n = length(unique(umap_dat$lineage)), pal = "brewerPlus", add = "lightgrey")) + 
+  scale_color_manual(values = distinct_palette(n = length(unique(umap_dat$lineage)), pal = "brewerPlus", add = "lightgrey")) + 
+  theme_classic(base_size = 20) + 
+  # guides(fill = guide_legend(ncol = 1)) + 
+  # add lineage labels at the center of each lineage cluster
+  geom_label_repel(
+    data = umap_dat %>%
+      group_by(lineage) %>%
+      summarize(V1 = median(V1), V2 = median(V2)),
+    aes(label = lineage, color = lineage),
+    size = 4,
+    # color = "black",
+    fill = "white",
+    alpha = 0.7,
+    show.legend = FALSE, 
+    max.overlaps = 100
+  ) +
+  theme(legend.position = "none", 
+        legend.title = element_text(size = 10), 
+        legend.text = element_text(size = 10)
+  ) +
+  labs(x = "UMAP1", 
+       y = "UMAP2", 
+       title = "UMAP of full CCLE RNA expression (no AE)")
+```
+
+```{r}
+#| echo: false
+#| out.width: "80%"
+#| fig.align: "center"
+knitr::include_graphics("CCLE_RNA_no_AE_UMAP_lineage.png")
+```
+
+### RNA deep features UMAP
+
+```{r}
+#| label: aim3-rna-ae-umap
+#| eval: false
+
+# Load compressed features
+RNA_AE_compressed_features <- fread("./results/output_files/RNA_AE_compressed_features.csv", data.table = FALSE) |> 
+  column_to_rownames(var = "V1")
+RNA_AE_compressed_features <- RNA_AE_compressed_features[rowSums(RNA_AE_compressed_features) != 0, ]
+
+# Match with sample info
+sample_info <- sample_info[match(rownames(RNA_AE_compressed_features), sample_info$StrippedCellLineName), ]
+
+# Run UMAP
+umap_dat <- umap(RNA_AE_compressed_features, n_components = 2, n_neighbors = 50, random_state = 524)
+umap_dat <- as.data.frame(umap_dat$layout)
+umap_dat$lineage <- sample_info$OncotreeLineage
+
+# Plot
+ggplot(umap_dat, aes(V1, V2, color = lineage, fill = lineage)) +
+  geom_point(size = 3, alpha = 0.5) + 
+  scale_fill_manual(values = distinct_palette(n = length(unique(umap_dat$lineage)), pal = "brewerPlus", add = "lightgrey")) + 
+  scale_color_manual(values = distinct_palette(n = length(unique(umap_dat$lineage)), pal = "brewerPlus", add = "lightgrey")) + 
+  theme_classic(base_size = 20) + 
+  geom_label_repel(
+    data = umap_dat %>% group_by(lineage) %>% summarize(V1 = median(V1), V2 = median(V2)),
+    aes(label = lineage, color = lineage),
+    size = 4, fill = "white", alpha = 0.7, show.legend = FALSE, max.overlaps = 100
+  ) +
+  theme(legend.position = "none") +
+  labs(title = "UMAP of AE compressed CCLE RNA expression")
+```
+
+```{r}
+#| echo: false
+#| out.width: "80%"
+#| fig.align: "center"
+knitr::include_graphics("CCLE_RNA_AE_UMAP_lineage.png")
+```
+
+### Multi-omics deep features UMAP
+
+```{r}
+#| label: aim3-multiomics-ae-umap
+#| eval: false
+
+# Load compressed features
+MultiOmics_AE_compressed_features <- fread("./results/output_files/MultiOmics_AE_compressed_features.csv", data.table = FALSE) |> 
+  column_to_rownames(var = "V1")
+MultiOmics_AE_compressed_features <- MultiOmics_AE_compressed_features[rowSums(MultiOmics_AE_compressed_features) != 0, ]
+
+# Match with sample info
+sample_info <- sample_info[match(rownames(MultiOmics_AE_compressed_features), sample_info$StrippedCellLineName), ]
+
+# Run UMAP
+umap_dat <- umap(MultiOmics_AE_compressed_features, n_components = 2, n_neighbors = 50, random_state = 524)
+umap_dat <- as.data.frame(umap_dat$layout)
+umap_dat$lineage <- sample_info$OncotreeLineage
+
+# Plot
+ggplot(umap_dat, aes(-V1, -V2, color = lineage, fill = lineage)) +
+  geom_point(size = 3, alpha = 0.5) + 
+  scale_fill_manual(values = distinct_palette(n = length(unique(umap_dat$lineage)), pal = "brewerPlus", add = "lightgrey")) + 
+  scale_color_manual(values = distinct_palette(n = length(unique(umap_dat$lineage)), pal = "brewerPlus", add = "lightgrey")) + 
+  theme_classic(base_size = 20) + 
+  geom_label_repel(
+    data = umap_dat %>% group_by(lineage) %>% summarize(V1 = median(V1), V2 = median(V2)),
+    aes(label = lineage, color = lineage),
+    size = 4, fill = "white", alpha = 0.7, show.legend = FALSE, max.overlaps = 100
+  ) +
+  theme(legend.position = "none") +
+  labs(title = "UMAP of AE compressed CCLE Multi-omics")
+```
+
+```{r}
+#| echo: false
+#| out.width: "80%"
+#| fig.align: "center"
+knitr::include_graphics("CCLE_MultiOmics_AE_UMAP_lineage.png")
+```
+
+
+## Conclusions
+
+1.  **RNA Deep Features**: Preserve original transcriptomic landscape across DepMap cell lines.
+2.  **Multi-omics Deep Features**: Reveal richer cell state structure than RNA alone.
+3.  **Next Steps**: Compare prediction accuracy on independent test data (deep features vs. full omics).

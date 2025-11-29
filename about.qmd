@@ -1,0 +1,29 @@
+---
+title: "Jay Chung"
+about:
+  template: jolla
+  image: IMG_3023.JPEG
+  links:
+    - icon: github
+      text: Github
+      href: https://github.com/jaychung10010
+    - icon: linkedin
+      text: LinkedIn
+      href: https://www.linkedin.com/in/jay-cy-chung/
+---
+
+I am an independent bioinformatics consultant based in San Diego, CA.
+
+I have over 10 years of experience in computational biology.
+
+## Education
+
+Icahn School of Medicine at Mount Sinai | PhD in Genetics & Genomics Sciences
+
+## Experience
+
+Plexium | Associate Director Bioinformatics | 2023 - 2025
+
+Pfizer | Senior Principal Scientst Epigenetics | 2019 - 2023
+
+Salk Institute | PostDoc Researcher | 2016 - 2019

@@ -1,0 +1,17 @@
+{
+  "index.qmd": {
+    "index.html": "2bdda18d"
+  },
+  "posts/sample-analysis/index.qmd": {
+    "index.html": "45904592"
+  },
+  "about.qmd": {
+    "about.html": "4800becc"
+  },
+  "posts/depmap-multiomics-autoencoder/index.qmd": {
+    "index.html": "70de018b"
+  },
+  "posts/2025-11-29_depmap-multiomics-autoencoder/index.qmd": {
+    "index.html": "b3653830"
+  }
+}

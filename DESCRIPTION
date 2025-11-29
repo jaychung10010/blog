@@ -1,0 +1,9 @@
+Type: Project
+Package: myblog
+Title: My R Blog
+Version: 1.0.0
+Imports:
+    tidyverse,
+    data.table,
+    ggpubr,
+    h2o
